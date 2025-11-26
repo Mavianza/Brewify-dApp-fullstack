@@ -1,23 +1,20 @@
 'use client'
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { MoreVertical, LogOut } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import ProductModal from './components/ProductModal'
+import useWallet from '@/hooks/useWallet'
+import { ethers } from 'ethers'
+import UserProfile from "@/build/contracts/UserProfile.json"
+import { useRouter } from 'next/navigation'
+
+// ----- DEBUG HELPER -----
+const dbg = (...msg: any[]) => console.log("[DEBUG HOME]:", ...msg)
 
 // ----- FILTER OPTIONS -----
-const productTypes = [
-  "Arabica", "Robusta", "Liberica", "Excelsa", "Geisha", "Blend",
-]
-
-const processTypes = [
-  "Natural", "Washed", "Honey Process", "Mixed Process",
-]
-
-const priceRanges = [
-  "0.010 - 0.015 ETH",
-  "0.016 - 0.025 ETH",
-  "0.026 - 0.050 ETH",
-]
+const productTypes = ["Arabica", "Robusta", "Liberica", "Excelsa", "Geisha", "Blend"]
+const processTypes = ["Natural", "Washed", "Honey Process", "Mixed Process"]
+const priceRanges = ["0.010 - 0.015 ETH", "0.016 - 0.025 ETH", "0.026 - 0.050 ETH"]
 
 // ----- PRODUCT DATA -----
 const products = [
@@ -113,18 +110,61 @@ const products = [
   },
 ]
 
+
 const Home = () => {
+  const router = useRouter()
+  const { connect, address, signer, isConnecting, disconnect } = useWallet()
+
   const [menuOpen, setMenuOpen] = useState(false)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [role, setRole] = useState<string | null>(null)
+  const [username, setUsername] = useState<string | null>(null)
 
   const [selectedProduct, setSelectedProduct] = useState<any | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  
+  // ================= CONNECT + FETCH USER PROFILE =================
+useEffect(() => {
+  const init = async () => {
+    if (!address) {
+      await connect()
+    }
 
-  const fakeLogin = () => {
-    setIsLoggedIn(true)
-    setRole("Farmer")
+    if (address && signer) {
+      try {
+        const contract = new ethers.Contract(
+          process.env.NEXT_PUBLIC_USERPROFILE_ADDRESS!,
+          UserProfile.abi,
+          signer
+        )
+
+        // Ambil semua data sekaligus dari getUser
+        const { 0: roleNumber, 1: usernameFromChain, 2: isRegistered } = await contract.getUser(address)
+
+        if (isRegistered) {
+          const roleMap: Record<number, string> = {
+            1: "Buyer",
+            2: "Farmer",
+            3: "Logistics"
+          }
+
+          setRole(roleMap[Number(roleNumber)] || "Unknown")
+          setUsername(usernameFromChain)
+          setIsLoggedIn(true)
+        } else {
+          router.push("/")
+        }
+      } catch (err) {
+        console.error("Gagal fetch profile:", err)
+        alert("Gagal fetch user profile, coba connect lagi")
+      }
+    }
   }
+
+  init()
+}, [address, signer])
+
+
 
   const openModal = (product: any) => {
     setSelectedProduct(product)
@@ -145,21 +185,31 @@ const Home = () => {
 
         {!isLoggedIn && (
           <button
-            onClick={fakeLogin}
-            className="px-4 py-2 bg-blue-500 text-white rounded-xl text-sm hover:opacity-80"
+            onClick={connect}
+            disabled={isConnecting}
+            className="px-4 py-2 bg-blue-500 text-white rounded-xl text-sm hover:opacity-80 disabled:opacity-50"
           >
-            Login
+            {isConnecting ? "Connecting..." : address ? "Connected" : "Connect Wallet"}
           </button>
         )}
 
-        {isLoggedIn && (
+        {isLoggedIn && role && (
           <div className="flex items-center gap-3">
             <button
-              onClick={() => console.log("Go Dashboard")}
+              onClick={() => {
+                if (!role) return;
+                const roleRouteMap: Record<string, string> = {
+                  Buyer: "/buyer",
+                  Farmer: "/farmer",
+                  Logistics: "/logistic",
+                }
+                router.push(roleRouteMap[role])
+              }}
               className="px-4 py-2 bg-blue-500 text-white rounded-xl text-sm hover:bg-blue-700 cursor-pointer"
             >
               Dashboard {role}
             </button>
+
 
             <button
               className="p-2 border border-gray-300 rounded-full hover:bg-gray-100 cursor-pointer"
@@ -178,20 +228,23 @@ const Home = () => {
                   className="absolute right-0 mt-12 w-56 bg-white border border-gray-200 rounded-xl shadow-lg z-10"
                 >
                   <div className="px-4 py-3 border-b">
-                    <p className="text-md">Hello, User</p>
+                    <p className="text-md">{username || "User"}</p>
                     <p className="text-xs text-gray-500">Role: {role}</p>
                   </div>
 
-                  <button
-                    onClick={() => {
-                      setIsLoggedIn(false);
-                      setRole(null);
-                      setMenuOpen(false);
-                    }}
-                    className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm text-red-600 hover:bg-red-50"
-                  >
-                    <LogOut size={16} /> Logout
-                  </button>
+                 <button
+                  onClick={() => {
+                    disconnect()           // putus koneksi wallet
+                    setIsLoggedIn(false)
+                    setRole(null)
+                    setUsername(null)
+                    setMenuOpen(false)
+                    router.push("/")       // langsung ke page utama
+                  }}
+                  className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm text-red-600 hover:bg-red-50"
+                >
+                  <LogOut size={16} /> Logout
+                </button>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -211,21 +264,14 @@ const Home = () => {
       {/* ============== MAIN LAYOUT ============== */}
       <div className="flex flex-col md:flex-row gap-6 flex-grow">
 
-        {/* ----------- SIDEBAR FILTER (FROM OLD CODE) ----------- */}
+        {/* ----------- SIDEBAR FILTER ----------- */}
         <div className="w-full md:w-1/4 space-y-6 sticky top-4 self-start">
-
-          {/* Filter by Type */}
+          {/* Filter Type */}
           <div>
-            <p className="uppercase text-gray-500 text-xs font-semibold mb-2">
-              Filter by Type
-            </p>
-
+            <p className="uppercase text-gray-500 text-xs font-semibold mb-2">Filter by Type</p>
             <div className="flex flex-col gap-2">
               {productTypes.map(type => (
-                <label
-                  key={type}
-                  className="flex items-center rounded-md p-2 cursor-pointer hover:bg-gray-100"
-                >
+                <label key={type} className="flex items-center rounded-md p-2 cursor-pointer hover:bg-gray-100">
                   <input type="checkbox" className="mr-2 w-4 h-4 accent-indigo-500" />
                   <span className="text-sm">{type}</span>
                 </label>
@@ -233,18 +279,12 @@ const Home = () => {
             </div>
           </div>
 
-          {/* Process */}
+          {/* Filter Process */}
           <div>
-            <p className="uppercase text-gray-500 text-xs font-semibold mb-2">
-              Process
-            </p>
-
+            <p className="uppercase text-gray-500 text-xs font-semibold mb-2">Process</p>
             <div className="flex flex-col gap-2">
               {processTypes.map(process => (
-                <label
-                  key={process}
-                  className="flex items-center rounded-md p-2 cursor-pointer hover:bg-gray-100"
-                >
+                <label key={process} className="flex items-center rounded-md p-2 cursor-pointer hover:bg-gray-100">
                   <input type="checkbox" className="mr-2 w-4 h-4 accent-indigo-500" />
                   <span className="text-sm">{process}</span>
                 </label>
@@ -252,18 +292,12 @@ const Home = () => {
             </div>
           </div>
 
-          {/* Price Range */}
+          {/* Filter Price */}
           <div>
-            <p className="uppercase text-gray-500 text-xs font-semibold mb-2">
-              Price Range
-            </p>
-
+            <p className="uppercase text-gray-500 text-xs font-semibold mb-2">Price Range</p>
             <div className="flex flex-col gap-2">
               {priceRanges.map(range => (
-                <label
-                  key={range}
-                  className="flex items-center rounded-md p-2 cursor-pointer hover:bg-gray-100"
-                >
+                <label key={range} className="flex items-center rounded-md p-2 cursor-pointer hover:bg-gray-100">
                   <input type="checkbox" className="mr-2 w-4 h-4 accent-indigo-500" />
                   <span className="text-sm">{range}</span>
                 </label>
@@ -277,26 +311,17 @@ const Home = () => {
           className="w-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"
           initial="hidden"
           animate="visible"
-          variants={{
-            visible: { transition: { staggerChildren: 0.1 } }
-          }}
+          variants={{ visible: { transition: { staggerChildren: 0.1 } } }}
         >
           {products.map(product => (
             <motion.div
               key={product.id}
               className="border border-gray-200 rounded-lg p-4 cursor-pointer hover:shadow-md transition"
-              variants={{
-                hidden: { opacity: 0, y: -10 },
-                visible: { opacity: 1, y: 0 }
-              }}
+              variants={{ hidden: { opacity: 0, y: -10 }, visible: { opacity: 1, y: 0 } }}
               transition={{ duration: 0.3 }}
               onClick={() => openModal(product)}
             >
-              <img
-                src={product.image}
-                className="w-full h-40 object-cover rounded-md mb-3"
-                alt={product.name}
-              />
+              <img src={product.image} className="w-full h-40 object-cover rounded-md mb-3" alt={product.name} />
               <h2 className="font-semibold">{product.name}</h2>
               <p className="text-sm text-gray-500">{product.origin}</p>
               <p className="mt-2 font-bold">{product.priceEth} ETH</p>

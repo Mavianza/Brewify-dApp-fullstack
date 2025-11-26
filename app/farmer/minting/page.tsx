@@ -139,7 +139,7 @@ export default function MintingNFT() {
           {/* Preview */}
           {file ? (
             <img src={URL.createObjectURL(file)} alt="Batch Preview" className="w-full h-96 object-cover rounded-lg shadow-lg" />
-          ) : (
+          ) : (-
             <div className="w-full h-96 border-2 border-gray-200 rounded-lg flex justify-center items-center text-gray-400">
               Image Preview
             </div>
